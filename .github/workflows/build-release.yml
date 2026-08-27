@@ -28,6 +28,9 @@ jobs:
           java-version: '25'
           cache: gradle
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Ensure Android SDK components
         run: |
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
