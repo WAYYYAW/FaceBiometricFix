@@ -1,5 +1,12 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
+}
+
+val signingProps = Properties().apply {
+    val file = rootProject.file("signing.properties")
+    if (file.exists()) load(file.inputStream())
 }
 
 android {
@@ -17,8 +24,18 @@ android {
 
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file(signingProps.getProperty("storeFile", "release.jks"))
+            storePassword = signingProps.getProperty("storePassword", "")
+            keyAlias = signingProps.getProperty("keyAlias", "")
+            keyPassword = signingProps.getProperty("keyPassword", "")
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             optimization {
                 enable = true
             }

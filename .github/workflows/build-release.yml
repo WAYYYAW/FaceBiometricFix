@@ -34,29 +34,47 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:assembleRelease --stacktrace
 
-      - name: Sign APK with debug key
+      - name: Sign APK with keystore
         run: |
-          if [ ! -f "$HOME/.android/debug.keystore" ]; then
-            keytool -genkeypair -v \
-              -keystore "$HOME/.android/debug.keystore" \
-              -storepass android -alias androiddebugkey -keypass android \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
+          UNSIGNED_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.1.0/apksigner"
+
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "Signing with release keystore from secrets"
+            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > /tmp/release.jks
+            KEYSTORE="/tmp/release.jks"
+            STORE_PASS="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+            KEY_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
+            KEY_PASS="${{ secrets.ANDROID_KEY_PASSWORD }}"
+          else
+            echo "Signing with debug keystore (no secrets configured)"
+            if [ ! -f "$HOME/.android/debug.keystore" ]; then
+              keytool -genkeypair -v \
+                -keystore "$HOME/.android/debug.keystore" \
+                -storepass android -alias androiddebugkey -keypass android \
+                -keyalg RSA -keysize 2048 -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US"
+            fi
+            KEYSTORE="$HOME/.android/debug.keystore"
+            STORE_PASS="android"
+            KEY_ALIAS="androiddebugkey"
+            KEY_PASS="android"
           fi
+
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             APK_NAME="FaceBiometricFix-${GITHUB_REF_NAME}.apk"
           else
             APK_NAME="FaceBiometricFix-${GITHUB_SHA::7}.apk"
           fi
-          UNSIGNED_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
-          APKSIGNER="$ANDROID_HOME/build-tools/36.1.0/apksigner"
+
           "$APKSIGNER" sign \
-            --ks "$HOME/.android/debug.keystore" \
-            --ks-key-alias androiddebugkey \
-            --ks-pass pass:android \
-            --key-pass pass:android \
+            --ks "$KEYSTORE" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass pass:"$STORE_PASS" \
+            --key-pass pass:"$KEY_PASS" \
             --out "$APK_NAME" \
             "$UNSIGNED_APK"
+
           echo "APK_NAME=$APK_NAME" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
