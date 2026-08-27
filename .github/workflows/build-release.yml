@@ -3,19 +3,23 @@ name: Build & Release
 on:
   push:
     branches:
-      - main
-    tags:
-      - 'v*'
+      - master
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+env:
+  TARGET_REPOSITORY: Xposed-Modules-Repo/com.way.facebiometricfix
+
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Set up JDK 25
         uses: actions/setup-java@v4
@@ -27,66 +31,122 @@ jobs:
       - name: Ensure Android SDK components
         run: |
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "platforms;android-37" "build-tools;36.1.0" >/dev/null 2>&1 || echo "SDK components already present"
+          sdkmanager "platforms;android-37" "build-tools;36.1.0"
+
+      - name: Read version and detect version change
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version_code=$(sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' app/build.gradle.kts)
+          version_name=$(sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' app/build.gradle.kts)
+          if [[ -z "$version_code" || -z "$version_name" ]]; then
+            echo "Unable to read versionCode/versionName" >&2
+            exit 1
+          fi
+
+          release_tag="${version_code}-${version_name}"
+          version_changed=true
+          if [[ "$GITHUB_EVENT_NAME" == "push" && -n "${{ github.event.before }}" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+            old_version_code=$(git show "${{ github.event.before }}:app/build.gradle.kts" 2>/dev/null | sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' || true)
+            old_version_name=$(git show "${{ github.event.before }}:app/build.gradle.kts" 2>/dev/null | sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' || true)
+            [[ "$version_code-$version_name" != "$old_version_code-$old_version_name" ]] || version_changed=false
+          fi
+
+          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "version_changed=$version_changed" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $release_tag; version changed: $version_changed"
+
+      - name: Stop when software version did not change
+        if: steps.version.outputs.version_changed != 'true'
+        run: echo "No version change; release skipped."
 
       - name: Build release APK
+        if: steps.version.outputs.version_changed == 'true'
         run: |
           chmod +x gradlew
           ./gradlew :app:assembleRelease --stacktrace
 
-      - name: Sign APK with keystore
+      - name: Sign APK
+        if: steps.version.outputs.version_changed == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          UNSIGNED_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
-          APKSIGNER="$ANDROID_HOME/build-tools/36.1.0/apksigner"
+          set -euo pipefail
+          : "${KEYSTORE_BASE64:?ANDROID_KEYSTORE_BASE64 is not configured}"
+          : "${KEYSTORE_PASSWORD:?ANDROID_KEYSTORE_PASSWORD is not configured}"
+          : "${KEY_ALIAS:?ANDROID_KEY_ALIAS is not configured}"
+          : "${KEY_PASSWORD:?ANDROID_KEY_PASSWORD is not configured}"
 
-          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
-            echo "Signing with release keystore from secrets"
-            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > /tmp/release.jks
-            KEYSTORE="/tmp/release.jks"
-            STORE_PASS="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
-            KEY_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
-            KEY_PASS="${{ secrets.ANDROID_KEY_PASSWORD }}"
-          else
-            echo "Signing with debug keystore (no secrets configured)"
-            if [ ! -f "$HOME/.android/debug.keystore" ]; then
-              keytool -genkeypair -v \
-                -keystore "$HOME/.android/debug.keystore" \
-                -storepass android -alias androiddebugkey -keypass android \
-                -keyalg RSA -keysize 2048 -validity 10000 \
-                -dname "CN=Android Debug,O=Android,C=US"
-            fi
-            KEYSTORE="$HOME/.android/debug.keystore"
-            STORE_PASS="android"
-            KEY_ALIAS="androiddebugkey"
-            KEY_PASS="android"
-          fi
-
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            APK_NAME="FaceBiometricFix-${GITHUB_REF_NAME}.apk"
-          else
-            APK_NAME="FaceBiometricFix-${GITHUB_SHA::7}.apk"
-          fi
-
-          "$APKSIGNER" sign \
-            --ks "$KEYSTORE" \
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          apk_name="FaceBiometricFix-${{ steps.version.outputs.release_tag }}.apk"
+          "$ANDROID_HOME/build-tools/36.1.0/apksigner" sign \
+            --ks "$RUNNER_TEMP/release.keystore" \
             --ks-key-alias "$KEY_ALIAS" \
-            --ks-pass pass:"$STORE_PASS" \
-            --key-pass pass:"$KEY_PASS" \
-            --out "$APK_NAME" \
-            "$UNSIGNED_APK"
+            --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --out "$apk_name" \
+            app/build/outputs/apk/release/app-release-unsigned.apk
+          "$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --verbose "$apk_name"
+          echo "APK_NAME=$apk_name" >> "$GITHUB_ENV"
 
-          echo "APK_NAME=$APK_NAME" >> "$GITHUB_ENV"
+      - name: Sync Xposed repository metadata
+        if: steps.version.outputs.version_changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.XPOSED_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${GH_TOKEN:?XPOSED_REPO_TOKEN is not configured}"
+          target_dir="$RUNNER_TEMP/xposed-repository"
+          gh repo clone "$TARGET_REPOSITORY" "$target_dir"
+          # README.md is the shared source; the Xposed repository keeps its own
+          # SUMMARY/SCOPE/SOURCE_URL metadata because the nested checkout is ignored.
+          cp README.md LICENSE "$target_dir/"
+          git -C "$target_dir" config user.name "github-actions[bot]"
+          git -C "$target_dir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$target_dir" add README.md LICENSE
+          if git -C "$target_dir" diff --cached --quiet; then
+            echo "Xposed metadata is already current."
+          else
+            git -C "$target_dir" commit -m "Sync metadata for ${{ steps.version.outputs.release_tag }}"
+            git -C "$target_dir" push origin HEAD:main
+          fi
 
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ env.APK_NAME }}
-          generate_release_notes: true
+      - name: Create release in main repository
+        if: steps.version.outputs.version_changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_tag="${{ steps.version.outputs.release_tag }}"
+          gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && {
+            echo "Release $release_tag already exists in $GITHUB_REPOSITORY" >&2
+            exit 1
+          } || true
+          gh release create "$release_tag" "$APK_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$release_tag" \
+            --generate-notes
 
-      - name: Upload APK artifact
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.APK_NAME }}
-          path: ${{ env.APK_NAME }}
+      - name: Create release in Xposed repository
+        if: steps.version.outputs.version_changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.XPOSED_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${GH_TOKEN:?XPOSED_REPO_TOKEN is not configured}"
+          release_tag="${{ steps.version.outputs.release_tag }}"
+          gh release view "$release_tag" --repo "$TARGET_REPOSITORY" >/dev/null 2>&1 && {
+            echo "Release $release_tag already exists in $TARGET_REPOSITORY" >&2
+            exit 1
+          } || true
+          gh release create "$release_tag" "$APK_NAME" \
+            --repo "$TARGET_REPOSITORY" \
+            --title "$release_tag" \
+            --generate-notes
