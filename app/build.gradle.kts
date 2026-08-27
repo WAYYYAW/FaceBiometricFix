@@ -12,13 +12,13 @@ val signingProps = Properties().apply {
 android {
     namespace = "com.way.facebiometricfix"
     compileSdk {
-        version = release(37)
+        version = release(36)
     }
 
     defaultConfig {
         applicationId = "com.way.facebiometricfix"
         minSdk = 35
-        targetSdk = 37
+        targetSdk = 36
         versionCode = 2
         versionName = "1.1"
 

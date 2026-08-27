@@ -22,19 +22,19 @@ jobs:
           fetch-depth: 2
 
       - name: Set up JDK 25
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '25'
           cache: gradle
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Ensure Android SDK components
         run: |
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "platforms;android-37" "build-tools;36.1.0"
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Read version and detect version change
         id: version
@@ -89,14 +89,14 @@ jobs:
 
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
           apk_name="FaceBiometricFix-${{ steps.version.outputs.release_tag }}.apk"
-          "$ANDROID_HOME/build-tools/36.1.0/apksigner" sign \
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
             --ks "$RUNNER_TEMP/release.keystore" \
             --ks-key-alias "$KEY_ALIAS" \
             --ks-pass "pass:$KEYSTORE_PASSWORD" \
             --key-pass "pass:$KEY_PASSWORD" \
             --out "$apk_name" \
             app/build/outputs/apk/release/app-release-unsigned.apk
-          "$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --verbose "$apk_name"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$apk_name"
           echo "APK_NAME=$apk_name" >> "$GITHUB_ENV"
 
       - name: Sync Xposed repository metadata
