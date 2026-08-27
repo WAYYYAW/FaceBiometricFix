@@ -67,13 +67,7 @@ jobs:
         if: steps.version.outputs.version_changed != 'true'
         run: echo "No version change; release skipped."
 
-      - name: Build release APK
-        if: steps.version.outputs.version_changed == 'true'
-        run: |
-          chmod +x gradlew
-          ./gradlew :app:assembleRelease --stacktrace
-
-      - name: Sign APK
+      - name: Restore signing configuration
         if: steps.version.outputs.version_changed == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -86,16 +80,26 @@ jobs:
           : "${KEYSTORE_PASSWORD:?ANDROID_KEYSTORE_PASSWORD is not configured}"
           : "${KEY_ALIAS:?ANDROID_KEY_ALIAS is not configured}"
           : "${KEY_PASSWORD:?ANDROID_KEY_PASSWORD is not configured}"
-
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          cat > signing.properties <<EOF
+          storeFile=$RUNNER_TEMP/release.keystore
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
+      - name: Build release APK
+        if: steps.version.outputs.version_changed == 'true'
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --stacktrace
+
+      - name: Prepare signed APK
+        if: steps.version.outputs.version_changed == 'true'
+        run: |
+          set -euo pipefail
           apk_name="FaceBiometricFix-${{ steps.version.outputs.release_tag }}.apk"
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
-            --ks "$RUNNER_TEMP/release.keystore" \
-            --ks-key-alias "$KEY_ALIAS" \
-            --ks-pass "pass:$KEYSTORE_PASSWORD" \
-            --key-pass "pass:$KEY_PASSWORD" \
-            --out "$apk_name" \
-            app/build/outputs/apk/release/app-release-unsigned.apk
+          cp app/build/outputs/apk/release/app-release.apk "$apk_name"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$apk_name"
           echo "APK_NAME=$apk_name" >> "$GITHUB_ENV"
 
