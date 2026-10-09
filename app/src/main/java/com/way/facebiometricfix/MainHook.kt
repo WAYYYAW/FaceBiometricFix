@@ -33,7 +33,8 @@ class MainHook : XposedModule() {
         val requestedStrength = runCatching { chain.getArg(1) as? Int }.getOrNull() ?: return@Hooker false
         if (packageName != null &&
             packageName != CODEBOOK_PACKAGE &&
-            sensorStrength == OEM_STRENGTH_MASK &&
+            (sensorStrength == OEM_STRENGTH_MASK ||
+                sensorStrength == WEAK_FACE_STRENGTH) &&
             (requestedStrength == STRONG_AUTHENTICATORS ||
                 requestedStrength == WEAK_AUTHENTICATORS)
         ) {
@@ -179,6 +180,12 @@ class MainHook : XposedModule() {
 
         /** 厂商私有强度掩码（人脸传感器上报值） */
         private const val OEM_STRENGTH_MASK = 4095
+
+        /**
+         * 类原生系统（AVIUM / Lineage 系）会把厂商人脸 HAL 的 4095 归一化成 Class 2 的 255。
+         * 必须与 4095 同等放行，否则模块在 system_server 挂载成功但完全不生效。
+         */
+        private const val WEAK_FACE_STRENGTH = 255
         private const val STRONG_AUTHENTICATORS = 15
         private const val WEAK_AUTHENTICATORS = 255
         private val APP_PRE_AUTH_PACKAGE = ThreadLocal<String>()
