@@ -1,4 +1,12 @@
 <resources>
     <string name="app_name">FaceBiometricFix</string>
     <string name="xposed_description">将 ColorOS 人脸传感器强度修正为标准 Class3 强度，使人脸解锁可用于 BiometricPrompt，作者：WAYYYAW（github）</string>
+
+    <!-- 设置界面 -->
+    <string name="settings_title">应用开关</string>
+    <string name="allow_strong">允许人脸满足强认证</string>
+    <string name="allow_strong_on">已开启：人脸可满足 Class 3 强认证，生物识别绑定的密钥可被人脸解锁。安全性随之降低。</string>
+    <string name="allow_strong_off">已关闭：人脸仅用于普通认证，需要强认证的应用只能使用指纹。</string>
+    <string name="enable_all">全部启用</string>
+    <string name="disable_all">全部停用</string>
 </resources>
